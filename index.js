@@ -9,14 +9,18 @@ app.use(bodyParser.json());
 const PORT = process.env.PORT || 3000;
 
 // In-memory quote storage (resets on server restart)
+// In-memory quote storage (resets on server restart)
 const sessionQuotes = {}; // Format: { sessionId: quoteObject }
 
-app.post("/webhook", async (req, res) => {
+exports.handler = async (event, context) => {
   try {
-    const body = req.body || {};
+    const body = JSON.parse(event.body || "{}");
     const sessionId = body.session || "default-session";
     const intent = body.queryResult?.intent?.displayName || "";
     const parameters = body.queryResult?.parameters || {};
+
+    console.log("Intent received:", intent);
+    console.log("Parameters received:", parameters);
 
     const products = {
       bike: { min: 800, max: 1200, rate: 0.1, maxDep: 0.5 },
@@ -33,47 +37,64 @@ app.post("/webhook", async (req, res) => {
 
     // Intent 1: GenerateQuote
     if (intent === "GenerateQuote") {
-      const { assetType, assetAge = 0 } = parameters;
+      const { assetType, assetAge } = parameters;
 
+      // Validate inputs
       if (!assetType || !products[assetType]) {
         responseText = `Invalid or missing asset type. Please provide one of the following: ${Object.keys(
           products
         ).join(", ")}.`;
-      } else {
-        const config = products[assetType];
-        const base =
-          Math.floor(Math.random() * (config.max - config.min + 1)) +
-          config.min;
-        const safeAge = Number(assetAge) || 0;
-        const depreciation = Math.min(safeAge * config.rate, config.maxDep);
-        const premium = Math.round(base * (1 - depreciation));
-        const coverageAmount = premium * (Math.floor(Math.random() * 10) + 10);
-        const quoteId = `INSQ${Math.floor(Math.random() * 1000000)}`;
-        const validTill = new Date(
-          Date.now() + 24 * 60 * 60 * 1000
-        ).toISOString();
-
-        const quote = {
-          quoteId,
-          assetType,
-          assetAge: safeAge,
-          premium,
-          coverageAmount,
-          currency: "INR",
-          validTill,
-          quotation_details: `Thanks for reaching out! Your ${assetType} insurance quote is ready — the premium is INR ${premium}, and you're covered for up to INR ${coverageAmount}.`,
+        return {
+          statusCode: 200,
+          body: JSON.stringify({ fulfillmentText: responseText }),
         };
+      }
 
-        sessionQuotes[sessionId] = quote;
+      if (assetAge === undefined || assetAge === null || isNaN(assetAge)) {
+        responseText = `Please specify the age of your ${assetType} in years.`;
+        return {
+          statusCode: 200,
+          body: JSON.stringify({ fulfillmentText: responseText }),
+        };
+      }
 
-        return res.json({
+      // Quote generation logic
+      const config = products[assetType];
+      const base =
+        Math.floor(Math.random() * (config.max - config.min + 1)) + config.min;
+      const safeAge = Number(assetAge) || 0;
+      const depreciation = Math.min(safeAge * config.rate, config.maxDep);
+      const premium = Math.round(base * (1 - depreciation));
+      const coverageAmount = premium * (Math.floor(Math.random() * 10) + 10);
+      const quoteId = `INSQ${Math.floor(Math.random() * 1000000)}`;
+      const validTill = new Date(
+        Date.now() + 24 * 60 * 60 * 1000
+      ).toISOString();
+
+      const quote = {
+        quoteId,
+        assetType,
+        assetAge: safeAge,
+        premium,
+        coverageAmount,
+        currency: "INR",
+        validTill,
+        quotation_details: `Thanks for reaching out! Your ${assetType} insurance quote is ready — the premium is INR ${premium}, and you're covered for up to INR ${coverageAmount}.`,
+      };
+
+      // Save to session
+      sessionQuotes[sessionId] = quote;
+
+      return {
+        statusCode: 200,
+        body: JSON.stringify({
           fulfillmentText: quote.quotation_details,
           ...quote,
-        });
-      }
+        }),
+      };
     }
 
-    // Follow-up intents
+    // Other follow-up intents
     const lastQuote = sessionQuotes[sessionId];
 
     if (!lastQuote) {
@@ -104,16 +125,22 @@ app.post("/webhook", async (req, res) => {
       }
     }
 
-    return res.json({
-      fulfillmentText: responseText,
-    });
+    return {
+      statusCode: 200,
+      body: JSON.stringify({
+        fulfillmentText: responseText,
+      }),
+    };
   } catch (error) {
     console.error("Webhook Error:", error);
-    return res.json({
-      fulfillmentText: "Oops! Something went wrong on the server.",
-    });
+    return {
+      statusCode: 200,
+      body: JSON.stringify({
+        fulfillmentText: "Oops! Something went wrong on the server.",
+      }),
+    };
   }
-});
+};
 
 app.listen(PORT, () => {
   console.log(`Dialogflow Webhook running on http://localhost:${PORT}/webhook`);
